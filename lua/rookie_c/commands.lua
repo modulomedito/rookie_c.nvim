@@ -40,6 +40,44 @@ local function remove_duplicates(items)
     return result
 end
 
+local function get_clangd_clients()
+    if vim.lsp.get_clients then
+        return vim.lsp.get_clients({ name = "clangd" })
+    end
+
+    return vim.tbl_filter(function(client)
+        return client.name == "clangd"
+    end, vim.lsp.get_active_clients())
+end
+
+local function restart_clangd_clients()
+    local clients = get_clangd_clients()
+    if #clients == 0 then
+        return
+    end
+
+    local attached_buffers = {}
+    for _, client in ipairs(clients) do
+        for buf, _ in pairs(client.attached_buffers or {}) do
+            attached_buffers[buf] = true
+        end
+        client.stop(true)
+    end
+
+    vim.defer_fn(function()
+        for buf, _ in pairs(attached_buffers) do
+            if vim.api.nvim_buf_is_valid(buf) and vim.bo[buf].filetype ~= "" then
+                vim.api.nvim_exec_autocmds("FileType", {
+                    buffer = buf,
+                    modeline = false,
+                })
+            end
+        end
+
+        vim.notify("Restarted clangd after updating compile_commands.json", vim.log.levels.INFO)
+    end, 200)
+end
+
 -- Search and collect parent folders of matching files
 local function search_and_collect_parent(dir, patterns)
     local raw_result = {}
@@ -115,6 +153,11 @@ function M.create_compile_commands_json()
     print("Created compile_commands.json")
 end
 
+local function create_compile_commands_and_restart_clangd()
+    M.create_compile_commands_json()
+    restart_clangd_clients()
+end
+
 function M.toggle_header_source()
     local filename = vim.fn.expand('%:t:r')
     local extension = vim.fn.expand('%:e')
@@ -151,12 +194,12 @@ function M.setup()
 
     -- RkClangdGenerate
     vim.api.nvim_create_user_command("RkClangdGenerate", function()
-        M.create_compile_commands_json()
+        create_compile_commands_and_restart_clangd()
     end, { desc = "Generate compile_commands.json for clangd" })
 
     -- CC as alias for RkClangdGenerate
     vim.api.nvim_create_user_command("CC", function()
-        M.create_compile_commands_json()
+        create_compile_commands_and_restart_clangd()
     end, { desc = "Alias for RkClangdGenerate" })
 
     -- Create the user command for toggling header/source
